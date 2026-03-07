@@ -1,0 +1,27 @@
+# NovelGrab – Python Worker Requirements
+#
+# Focused scraping worker + Redis queue consumer.
+# Pattern from async-python-patterns skill.
+
+# Existing scraping dependencies
+fastapi
+uvicorn[standard]
+httpx[http2]
+beautifulsoup4
+lxml
+ebooklib
+python-multipart
+sse-starlette
+curl_cffi
+cloudscraper
+
+# Redis / Queue
+redis>=5.0.0
+rq>=1.16.0
+
+# Storage
+boto3>=1.34.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0

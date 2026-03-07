@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+httpx[http2]
+beautifulsoup4
+lxml
+ebooklib
+python-multipart
+sse-starlette
+curl_cffi
+cloudscraper

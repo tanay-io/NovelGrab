@@ -1,0 +1,199 @@
+# ─────────────────────────────────────────────────────────────────
+# NovelGrab – Docker Compose (Development)
+#
+# Starts all services needed for the full architecture:
+#   - MongoDB (database)
+#   - Redis (BullMQ queues + cache)
+#   - Python Backend (scraper + EPUB builder)
+#   - Node.js API (THE BRAIN)
+#   - Node.js Artifact Worker
+#   - Python Chapter Worker
+#   - Frontend (Next.js)
+#
+# Pattern from docker-expert skill:
+#   - Health checks for all services
+#   - Named volumes for persistence
+#   - Custom network for service discovery
+#   - Resource limits
+# ─────────────────────────────────────────────────────────────────
+
+services:
+  # ─── MongoDB ────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: novelgrab-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - novelgrab
+
+  # ─── Redis ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: novelgrab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - novelgrab
+
+  # ─── Python Backend (Scraper) ──────────────────────────────────
+  python-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: novelgrab-python-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - python_cache:/app/cache
+      - python_temp:/app/temp
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    networks:
+      - novelgrab
+
+  # ─── Node.js API (THE BRAIN) ──────────────────────────────────
+  node-api:
+    build:
+      context: ./node-api
+      dockerfile: Dockerfile
+    container_name: novelgrab-node-api
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./node-api:/app
+      - /app/node_modules
+      - node_storage:/app/storage
+    environment:
+      - PORT=3001
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb+srv://admin:neeru2005@cluster0.mou2u4p.mongodb.net/
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHON_SCRAPER_URL=http://python-backend:8000
+      - STORAGE_PROVIDER=local
+      - LOCAL_STORAGE_PATH=./storage
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      python-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    networks:
+      - novelgrab
+
+  # ─── Node.js Artifact Worker ──────────────────────────────────
+  artifact-worker:
+    build:
+      context: ./node-api
+      dockerfile: Dockerfile
+    container_name: novelgrab-artifact-worker
+    command: node src/workers/artifact-worker.js
+    volumes:
+      - ./node-api:/app
+      - /app/node_modules
+      - node_storage:/app/storage
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongodb:27017/novelgrab
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHON_SCRAPER_URL=http://python-backend:8000
+      - STORAGE_PROVIDER=local
+      - LOCAL_STORAGE_PATH=./storage
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      python-backend:
+        condition: service_healthy
+    networks:
+      - novelgrab
+
+  # ─── Python Chapter Worker ────────────────────────────────────
+  python-worker:
+    build:
+      context: ./python-worker
+      dockerfile: Dockerfile
+    container_name: novelgrab-python-worker
+    volumes:
+      - ./python-worker/src:/app
+      - node_storage:/storage
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SCRAPER_URL=http://python-backend:8000
+      - STORAGE_PROVIDER=local
+      - LOCAL_STORAGE_PATH=/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+      python-backend:
+        condition: service_healthy
+    networks:
+      - novelgrab
+
+  # ─── Frontend (Next.js) ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend_2
+      dockerfile: Dockerfile
+    container_name: novelgrab-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+    depends_on:
+      node-api:
+        condition: service_healthy
+    networks:
+      - novelgrab
+
+# ─── Volumes ──────────────────────────────────────────────────────
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  python_cache:
+    driver: local
+  python_temp:
+    driver: local
+  node_storage:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────
+
+networks:
+  novelgrab:
+    driver: bridge
